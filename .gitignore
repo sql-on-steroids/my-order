@@ -30,5 +30,6 @@
 *.dll
 *.ocx
 out/
+logs/
 workspace.xml
 *.txt

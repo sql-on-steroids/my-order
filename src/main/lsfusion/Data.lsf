@@ -1,0 +1,218 @@
+MODULE Data;
+
+REQUIRE Utils, Time, Security, Authentication;
+
+CLASS UserStatus 'Статус пользователя' {
+  Admin 'Администратор',
+  Client 'Клиент',
+  Salesman 'Продавец'
+}
+
+userStatus(ISTRING[100] userRoleName) = CASE EXCLUSIVE 
+  WHEN userRoleName == 'admin' THEN UserStatus.Admin
+  WHEN userRoleName == 'client' THEN UserStatus.Client
+  WHEN userRoleName == 'salesman' THEN UserStatus.Salesman
+  ELSE NULL 
+;  
+
+currentUserStatus() = userStatus(sid(mainRole(currentUser())));
+
+CLASS Group 'Группа';
+name 'Наименование' = DATA ISTRING[100] (Group) IN base;
+
+CLASS Country 'Страна';
+id 'Код' = DATA STRING[2] (Country) IN base;
+
+CLASS Manufacturer 'Производитель';
+name 'Наименование' = DATA ISTRING[100] (Manufacturer) IN base;
+
+CLASS SKU 'Товар';
+id 'Код' = DATA STRING[11] (SKU) IN base;
+name 'Наименование' = DATA ISTRING[100] (SKU);
+deleted 'Удалён' = DATA BOOLEAN (SKU); // Товар удалён в 1С, нельзя добавить в новый заказ
+group = DATA Group (SKU);
+groupName 'Группа' = name(group(SKU)); 
+country = DATA Country (SKU);
+countryID 'Страна' = id(country(SKU));
+manufacturer = DATA Manufacturer (SKU);
+manufacturerName 'Производитель' = name(manufacturer(SKU));
+packing 'Фасовка' = DATA INTEGER (SKU);
+onSale 'Распродажа' = DATA BOOLEAN (SKU);
+price 'Цена' = DATA NUMERIC[10,2] (SKU);
+
+CLASS Customer 'Покупатель';
+id 'Код' = DATA STRING[9] (Customer) IN base;
+name 'Наименование' = DATA ISTRING[100] (Customer);
+
+mainCustomer = DATA Customer (User);
+
+CLASS Status 'Статус заказа' {
+  InPreparation 'В подготовке',
+  Sent 'Отправлен',
+  Processed 'Обработан',
+  Rejected 'Не принят'
+}
+
+CLASS Order 'Заказ';
+no '№' = DATA STRING[11] (Order) IN base;
+date 'Дата' = DATA DATETIME (Order);
+status = DATA Status (Order); 
+statusName 'Статус' = staticCaption(status(Order)) CHARWIDTH 12;
+customer = DATA Customer (Order) NONULL;
+customerName 'Клиент' = name(customer(Order));
+author = DATA User (Order);
+authorName 'Автор' = name(author(Order));
+authorLogin = login(author(Order));
+answer 'Ответ поставщика' = DATA ISTRING[255] (Order); 
+readOnly = status(Order o) == Status.Sent OR status(o) == Status.Processed;
+
+WHEN LOCAL SET(Order o IS Order) DO {
+  date(o) <- currentDateTime();
+  status(o) <- Status.InPreparation;
+  author(o) <- currentUser();
+  customer(o) <- mainCustomer(currentUser());
+}
+
+CONSTRAINT DROPPED(Order o IS Order) AND PREV(readOnly(o))
+  MESSAGE 'Нельзя удалить отправленный поставщику заказ';
+
+CLASS OrderDetail 'Строка заказа';
+owner = DATA Order (OrderDetail) NONULL DELETE;
+no '№' = PARTITION SUM 1 ORDER OrderDetail od BY owner(od);
+sku = DATA SKU (OrderDetail) NONULL;
+skuId 'Код товара' = id(sku(OrderDetail));
+skuName 'Товар' = name(sku(OrderDetail));
+skuPacking 'Упаковка' = packing(sku(OrderDetail));
+skuDeleted 'Удалён' = deleted(sku(OrderDetail));
+quantity 'Кол-во' = DATA NUMERIC[15,3] (OrderDetail) NONULL;
+quantityErr = mod(quantity(OrderDetail od), packing(sku(od))) != 0
+  OR quantity(od) < 0;
+price 'Цена' = DATA NUMERIC[10,2] (OrderDetail);
+amount 'Сумма' = NUMERIC[10,2](round2(quantity(OrderDetail od) * price(od)));
+
+amount 'Сумма' (Order o) = GROUP SUM amount(OrderDetail od) IF owner(od) = o; 
+
+view 'Просмотреть' (Order o) {
+  SHOW EDIT Order = o READONLY;
+}
+
+FORM ordersForm 'Заказы покупателей' AUTOREFRESH 30
+  OBJECTS o = Order LAST
+  PROPERTIES(o) READONLY no, date, statusName, customerName, amount, authorName
+  PROPERTIES(o) NEWSESSION NEWEDIT, btnEdit = EDIT SHOWIF NOT readOnly(o), 
+    view SHOWIF readOnly(o), DELETE
+  ORDER date(o), no(o)
+  FILTERS (currentUserStatus() == UserStatus.Admin) OR (author(o) = currentUser())
+  LIST Order OBJECT o
+;
+
+DESIGN ordersForm {
+  TOOLBAR(o) {
+    MOVE PROPERTY(view(o)) AFTER PROPERTY(btnEdit) { }
+  } 
+}
+
+FORM orderForm 'Заказ'
+  OBJECTS o = Order PANEL
+  PROPERTIES(o) READONLY no, date, statusName, 'Общая сумма заказа' = amount, answer
+  PROPERTIES(o) customerName READONLYIF currentUserStatus() == UserStatus.Client
+  ORDER date(o), no(o)
+  OBJECTS od = OrderDetail
+  PROPERTIES(od) no, skuId, skuName, quantity FOREGROUND RGB(255,0,0) IF quantityErr(od), 
+    skuPacking, price READONLY, amount, skuDeleted SHOWIF currentUserStatus() == UserStatus.Admin 
+  PROPERTIES(od) SHOWIF NOT readOnly(o) NEW, DELETE
+  ORDER no(od)
+  FILTERS owner(od) == o
+  EDIT Order OBJECT o
+;
+
+WHEN LOCAL FORMS orderForm SET(od IS OrderDetail) AND NOT sku(od) DO {
+  LOCAL NESTED newSKU = SKU();
+  NEWSESSION {
+    DIALOG LIST SKU INPUT s DO {
+      newSKU() <- s;
+    }
+  }
+  sku(od) <- newSKU();
+}
+
+WHEN LOCAL FORMS orderForm quantity(OrderDetail od) <= 0 DO { 
+  MESSAGE 'Количество товара должно быть положительным';
+  quantity(od) <- PREV(quantity(od));
+}    
+
+DESIGN orderForm {
+  OBJECTS {
+    NEW bottom AFTER BOX(od) {
+      type = CONTAINERH;
+      MOVE PROPERTY(amount(o));
+      MOVE PROPERTY(answer(o));
+    }
+  }
+}
+
+WHEN LOCAL FORMS orderForm SETCHANGED(sku(OrderDetail od)) DO {
+  price(od) <- price(sku(od));
+}
+
+FORM skusForm 'Товары'
+  OBJECTS s = SKU
+  PROPERTIES(s) READONLY groupName, name, id, countryID, manufacturerName, packing, onSale, price
+  PROPERTIES(s) READONLY deleted SHOWIF currentUserStatus() == UserStatus.Admin
+  //!!PROPERTIES(s) NEWEDIT, EDIT, DELETE
+  FILTERS NOT deleted(s) OR currentUserStatus() == UserStatus.Admin
+  ORDER groupName(s), name(s)
+  LIST SKU OBJECT s
+;
+
+FORM skuForm 'Товар'
+  OBJECTS s = SKU PANEL
+  PROPERTIES(s) groupName, name, id, countryID, manufacturerName, packing, onSale, price
+  EDIT SKU OBJECT s 
+;
+
+FORM manufacturersForm 'Производители'
+  OBJECTS m = Manufacturer
+  PROPERTIES(m) READONLY name
+  //!!PROPERTIES(m) NEWEDIT, EDIT, DELETE
+  ORDER name(m)
+  LIST Manufacturer OBJECT m
+;
+
+FORM manufacturerForm 'Производитель'
+  OBJECTS m = Manufacturer
+  PROPERTIES(m) name
+  EDIT Manufacturer OBJECT m 
+;
+
+FORM customersForm 'Покупатели'
+  OBJECTS c = Customer
+  PROPERTIES(c) READONLY id, name
+  //!!PROPERTIES(c) NEWEDIT, EDIT, DELETE
+  ORDER name(c)
+  LIST Customer OBJECT c
+;
+
+FORM customerForm 'Покупатель'
+  OBJECTS c = Customer
+  PROPERTIES(c) id, name
+  EDIT Customer OBJECT c 
+;
+
+FORM groupsForm 'Группы товаров'
+  OBJECTS g = Group
+  PROPERTIES(g) READONLY name
+  //!!PROPERTIES(g) NEWEDIT, EDIT, DELETE
+  ORDER name(g)
+  LIST Group OBJECT g
+;
+
+FORM groupForm 'Группа товаров'
+  OBJECTS g = Group
+  PROPERTIES(g) name
+  EDIT Group OBJECT g 
+;
+
+NAVIGATOR {
+  NEW ordersForm BEFORE Authentication.account;
+}

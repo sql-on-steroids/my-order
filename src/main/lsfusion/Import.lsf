@@ -1,0 +1,130 @@
+MODULE Import;
+
+REQUIRE Utils, Settings, Data;
+
+importResult = DATA LOCAL BOOLEAN ();
+
+importCatalog(FILE file) {
+  // Загружаем каталог из файла
+  LOCAL group = ISTRING[100] (INTEGER);
+  LOCAL skuID = STRING[11] (INTEGER);
+  LOCAL skuName = ISTRING[100] (INTEGER);
+  LOCAL country = STRING[2] (INTEGER);
+  LOCAL manufacturer = ISTRING[100] (INTEGER);
+  LOCAL packing = INTEGER (INTEGER);
+  LOCAL onSale = STRING[1] (INTEGER);
+  LOCAL price = NUMERIC[10,2] (INTEGER);
+  IMPORT FROM file TO group, skuID, skuName, country, manufacturer, packing, onSale, price;
+  // Пометим все существующие товары на удаление
+  FOR SKU sku IS SKU DO {
+    deleted(sku) <- TRUE;
+  }
+  // Обновляем справочники
+  LOCAL sku = SKU ();
+  FOR imported(INTEGER i) DO {
+    IF group(i) != 'Group' THEN { // Ошибочно захватывает заголовки в Excel-файле
+      sku() <- GROUP MAX SKU s IF id(s) == skuID(i);
+      IF NOT sku() THEN {
+        NEW s = SKU {
+          id(s) <- skuID(i);
+          sku() <- s;
+        } 
+      }
+      name(sku()) <- skuName(i);
+      group(sku()) <- GROUP MAX Group g IF name(g) == group(i);
+      IF NOT group(sku()) THEN {
+        NEW g = Group {
+          name(g) <- group(i);
+          group(sku()) <- g;
+        } 
+      }
+      country(sku()) <- GROUP MAX Country c IF id(c) == country(i);
+      IF NOT country(sku()) THEN {
+        NEW c = Country {
+          id(c) <- country(i);
+          country(sku()) <- c;
+        } 
+      }
+      manufacturer(sku()) <- GROUP MAX Manufacturer m IF name(m) == manufacturer(i);
+      IF NOT manufacturer(sku()) THEN {
+        NEW m = Manufacturer {
+          name(m) <- manufacturer(i);
+          manufacturer(sku()) <- m;
+        } 
+      }
+      packing(sku()) <- packing(i);
+      onSale(sku()) <- BOOLEAN(onSale(i));
+      price(sku()) <- price(i);
+      deleted(sku()) <- NULL;
+    }
+  }
+  importResult() <- TRUE;
+}
+
+importCustomer(FILE file) {
+  // Загружаем список покупателей из файла
+  LOCAL id = STRING[9] (INTEGER);
+  LOCAL name = ISTRING[100] (INTEGER);
+  IMPORT FROM file TO id, name;
+  LOCAL customer = Customer ();
+  FOR imported(INTEGER i) DO {
+    IF id(i) != 'ID' THEN { // Ошибочно захватывает заголовки в Excel-файле
+      customer() <- GROUP MAX Customer c IF id(c) == id(i);
+      IF NOT customer() THEN {
+        NEW c = Customer {
+          id(c) <- id(i);
+          customer() <- c;
+        } 
+      }
+      name(customer()) <- name(i);
+    }
+  }
+  importResult() <- TRUE;
+}
+
+impID = DATA LOCAL LONG ();
+impNo = DATA LOCAL STRING[11] ();
+impResult = DATA LOCAL BOOLEAN ();
+impMessage = DATA LOCAL ISTRING[255] ();
+
+FORM orderResultForm
+  PROPERTIES() id = impID, no = impNo, result = impResult, message = impMessage  
+;
+
+importOrderResult(FILE file) { 
+  // Загружаем результат обработки заказа в учётной системе
+  IMPORT orderResultForm FROM file;
+  LOCAL order = Order ();
+  order() <- GROUP MAX o IF o IS Order AND LONG(o) = impID();
+  IF order() THEN {
+    no(order()) <- impNo();
+    status(order()) <- IF impResult() THEN Status.Processed ELSE Status.Rejected;    
+    answer(order()) <- impMessage();
+    importResult() <- TRUE;
+  } ELSE 
+    importResult() <- NULL;
+}
+
+importFiles() {
+  listFiles(exchangeFolder() + '/in/');
+  FOR ISTRING[255] f = fileName(INTEGER j) AND NOT fileIsDirectory(j) DO NEWSESSION {
+    importResult() <- NULL;
+    LOCAL file = FILE ();
+    READ exchangeFolder() + '/in/' + f TO file;
+    IF istartsWith(f, 'catalog') THEN // catalog.xlsx, catalog.xls или catalog.json
+      importCatalog(file());
+    ELSE IF istartsWith(f, 'customer') THEN // customer.xlsx, customer.xls или customer.json
+      importCustomer(file());
+    ELSE IF istartsWith(f, 'order result') THEN // "order result NNNN.json"
+      importOrderResult(file());
+    LOCAL subFolder = ISTRING[4] ();
+    subFolder() <- IF importResult() THEN 'ok/' ELSE 'bad/';
+    move(exchangeFolder() + '/in/' + f, exchangeFolder() + '/in/' + subFolder() + f);
+    IF importResult() THEN
+      APPLY;
+  }
+}
+
+//!!NAVIGATOR {
+//  NEW importFiles;
+//}

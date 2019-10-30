@@ -1,0 +1,81 @@
+MODULE Main;
+
+REQUIRE SystemEvents, Reflection, Authentication, Scheduler, Settings, Data, 
+  Export, Import;
+
+applicationInitialized = DATA BOOLEAN (); 
+
+initRole(STRING[30] sid, ISTRING[100] name, BPSTRING[100] login, ISTRING[100] userName) {
+  IF NOT userRoleSID(sid) THEN
+    NEW ur = UserRole {
+      sid(ur) <- sid;
+      name(ur) <- name;
+      forbidAllForms(ur) <- TRUE;
+      defaultForms(ur) <- DefaultForms.default;
+      permit(ur, navigatorElementCanonicalName('Data.ordersForm')) <- TRUE;
+      defaultNumber(ur, navigatorElementCanonicalName('Data.ordersForm')) <- 1;
+      permit(ur, navigatorElementCanonicalName('Authentication.account')) <- TRUE;
+      permit(ur, navigatorElementCanonicalName('Authentication.editProfile')) <- TRUE;
+      permit(ur, navigatorElementCanonicalName('Authentication.changePasswordAction')) <- TRUE;
+      permit(ur, navigatorElementCanonicalName('Authentication.logOutAction')) <- TRUE;
+      IF sid = 'client' THEN
+        defaultMainRole() <- ur;
+      NEW u = CustomUser {
+        login(u) <- login;
+        firstName(u) <- userName;
+        mainRole(u) <- ur;
+        calculateBase64Hash('SHA-256', '');
+        sha256Password(u) <- calculatedHash();
+      } 
+    }
+}
+
+onStarted() + {
+	NEWSESSION {
+    IF NOT applicationInitialized() 
+      AND navigatorElementCanonicalName('Data.ordersForm') // Light start should be OFF! 
+    THEN {
+      applicationInitialized() <- TRUE;
+      displayName() <- 'Система заказов My Order';
+      // Блокируем анонимного пользователя
+      LOCAL u = User ();
+      u() <- customUser('anonymous');
+      IF u() THEN {
+        firstName(u()) <- 'Аноним';
+        isLocked(u()) <- TRUE;
+      }
+      u() <- customUser('admin');
+      IF u() THEN {
+        firstName(u()) <- 'Администратор';
+      }
+      // Добавляем роли по-умолчанию
+      IF NOT userRoleSID('admin') THEN
+        NEW ur = UserRole {
+          sid(ur) <- 'admin';
+          name(ur) <- 'Администратор';
+          mainRole(customUser('admin')) <- ur;
+        }
+      initRole('client', 'Клиент', 'ivan', 'Иван клиент');
+      initRole('salesman', 'Продавец', 'petr', 'Пётр продавец');
+      FOR UserRole ur IS UserRole DO {
+        forbidDuplicateForms(ur) <- TRUE;
+      }
+      // Добавляем планировщику команду получения данных с 1С
+      IF NOT scheduledTask('Импорт из 1С') THEN
+        NEW task = UserScheduledTask {
+          name(task) <- 'Импорт из 1С';
+          period(task) <- 30; // Повторять каждые ... сек.
+          schedulerStartType(task) <- SchedulerStartType.afterFinish;
+          runAtStart(task) <- TRUE;
+          active(task) <- TRUE;
+          NEW td = UserScheduledTaskDetail {
+            active(td) <- TRUE;
+            order(td) <- 1;
+            action(td) <- actionCanonicalName('Import.importFiles[]');
+            scheduledTask(td) <- task;
+          } 
+        }
+      APPLY;
+    }
+	}
+}

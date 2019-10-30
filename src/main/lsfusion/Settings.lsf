@@ -1,0 +1,39 @@
+MODULE Settings;
+
+REQUIRE SystemEvents, Utils, Authentication, Data;
+
+exchangeFolder 'Папка обмена с учётной системой на сервере' = DATA ISTRING[500] (); 
+
+WHEN SETCHANGED(exchangeFolder()) DO {
+  fileExists(exchangeFolder());
+  IF fileExists() THEN {
+    mkdir(exchangeFolder() + '/in');
+    mkdir(exchangeFolder() + '/in/ok');
+    mkdir(exchangeFolder() + '/in/bad');
+    mkdir(exchangeFolder() + '/out');
+  } ELSE {
+    MESSAGE 'Папка "' + exchangeFolder() + '" на сервере не найдена.' NOWAIT;
+    CANCEL; 
+  }
+}
+
+onStarted() + {
+  IF NOT exchangeFolder() THEN {
+    NEWSESSION {
+      exchangeFolder() <- 'd:/MyOrder/Exchange';
+      APPLY;
+    }
+  }
+}
+
+mainCustomerName 'Покупатель' = name(mainCustomer(User));
+
+FORM settingsForm 'Настройки программы'
+  PROPERTIES() exchangeFolder
+  OBJECTS u 'Назначенные пользователям контрагенты-покупатели' = CustomUser
+  PROPERTIES(u) name READONLY, mainCustomerName   
+;
+
+NAVIGATOR {
+  NEW settingsForm AFTER administration;
+}

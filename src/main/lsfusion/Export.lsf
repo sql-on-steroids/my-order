@@ -1,0 +1,39 @@
+MODULE Export;
+
+REQUIRE Data, Settings;
+
+FORM exportOrder
+  OBJECTS order = Order, customer = Customer
+  PROPERTIES(order) id = VALUE, date, author = authorLogin, amount
+  PROPERTIES(customer) id, name
+  FILTERS customer(order) == customer
+  OBJECTS od = OrderDetail
+  PROPERTIES(od) no, skuId, skuName, quantity, price, amount
+  ORDER no(od)
+  FILTERS owner(od) == order
+;
+
+send 'Отправить' (Order order) {
+  ASK 'Вы готовы отправить заказ от ' + date(order) + ' на сумму ' + amount(order) + ' руб. ?' DO {
+    NEWSESSION {
+      EXPORT exportOrder OBJECTS order = order JSON;
+      //!!SHOW exportOrder;
+      WRITE exportFile() TO exchangeFolder() + '/out/order ' + toChar(date(order), 'YYYY-MM-DD HH24-MI-SS');
+      status(order) <- Status.Sent;
+      APPLY;
+    }
+  }
+}
+
+EXTEND FORM ordersForm
+  PROPERTIES(o) send TOOLBAR SHOWIF status(o) == Status.InPreparation
+    OR status(o) == Status.Rejected
+;
+
+DESIGN ordersForm {
+  TOOLBAR(o) {
+    MOVE PROPERTY(send(o)) FIRST {
+      background = #008800;
+    }
+  } 
+}

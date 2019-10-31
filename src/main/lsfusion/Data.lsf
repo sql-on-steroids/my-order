@@ -16,18 +16,23 @@ userStatus(ISTRING[100] userRoleName) = CASE EXCLUSIVE
 ;  
 
 currentUserStatus() = userStatus(sid(mainRole(currentUser())));
+isAdmin() = currentUserStatus() == UserStatus.Admin;
 
 CLASS Group 'Группа';
-name 'Наименование' = DATA ISTRING[100] (Group) IN base;
+name 'Наименование' = DATA ISTRING[100] (Group) IN id;
+groupByName (ISTRING[100] name) = GROUP AGGR Group g BY name(g);
 
 CLASS Country 'Страна';
-id 'Код' = DATA STRING[2] (Country) IN base;
+id 'Код' = DATA STRING[2] (Country) IN id;
+countryByID (STRING[2] id) = GROUP AGGR Country c BY id(c);
 
 CLASS Manufacturer 'Производитель';
-name 'Наименование' = DATA ISTRING[100] (Manufacturer) IN base;
+name 'Наименование' = DATA ISTRING[100] (Manufacturer) IN id;
+manufacturerByName (ISTRING[100] name) = GROUP AGGR Manufacturer m BY name(m);
 
 CLASS SKU 'Товар';
-id 'Код' = DATA STRING[11] (SKU) IN base;
+id 'Код' = DATA STRING[11] (SKU) IN id;
+skuByID (STRING[11] id) = GROUP AGGR SKU u BY id(u);
 name 'Наименование' = DATA ISTRING[100] (SKU);
 deleted 'Удалён' = DATA BOOLEAN (SKU); // Товар удалён в 1С, нельзя добавить в новый заказ
 group = DATA Group (SKU);
@@ -41,8 +46,9 @@ onSale 'Распродажа' = DATA BOOLEAN (SKU);
 price 'Цена' = DATA NUMERIC[10,2] (SKU);
 
 CLASS Customer 'Покупатель';
-id 'Код' = DATA STRING[9] (Customer) IN base;
-name 'Наименование' = DATA ISTRING[100] (Customer);
+id 'Код' = DATA STRING[9] (Customer) IN id;
+customerByID (STRING[9] id) = GROUP AGGR Customer c BY id(c);
+name 'Наименование' = DATA ISTRING[100] (Customer) IN base;
 
 mainCustomer = DATA Customer (User);
 
@@ -102,7 +108,7 @@ FORM ordersForm 'Заказы покупателей' AUTOREFRESH 30
   PROPERTIES(o) NEWSESSION NEWEDIT, btnEdit = EDIT SHOWIF NOT readOnly(o), 
     view SHOWIF readOnly(o), DELETE
   ORDER date(o), no(o)
-  FILTERS (currentUserStatus() == UserStatus.Admin) OR (author(o) = currentUser())
+  FILTERS isAdmin() OR (currentUser() = author(o))
   LIST Order OBJECT o
 ;
 
@@ -119,7 +125,7 @@ FORM orderForm 'Заказ'
   ORDER date(o), no(o)
   OBJECTS od = OrderDetail
   PROPERTIES(od) no, skuId, skuName, quantity FOREGROUND RGB(255,0,0) IF quantityErr(od), 
-    skuPacking, price READONLY, amount, skuDeleted SHOWIF currentUserStatus() == UserStatus.Admin 
+    skuPacking, price READONLY, amount, skuDeleted SHOWIF isAdmin() 
   PROPERTIES(od) SHOWIF NOT readOnly(o) NEW, DELETE
   ORDER no(od)
   FILTERS owner(od) == o
@@ -158,9 +164,9 @@ WHEN LOCAL FORMS orderForm SETCHANGED(sku(OrderDetail od)) DO {
 FORM skusForm 'Товары'
   OBJECTS s = SKU
   PROPERTIES(s) READONLY groupName, name, id, countryID, manufacturerName, packing, onSale, price
-  PROPERTIES(s) READONLY deleted SHOWIF currentUserStatus() == UserStatus.Admin
+  PROPERTIES(s) READONLY deleted SHOWIF isAdmin()
   //!!PROPERTIES(s) NEWEDIT, EDIT, DELETE
-  FILTERS NOT deleted(s) OR currentUserStatus() == UserStatus.Admin
+  FILTERS NOT deleted(s) OR isAdmin()
   ORDER groupName(s), name(s)
   LIST SKU OBJECT s
 ;
@@ -179,12 +185,6 @@ FORM manufacturersForm 'Производители'
   LIST Manufacturer OBJECT m
 ;
 
-FORM manufacturerForm 'Производитель'
-  OBJECTS m = Manufacturer
-  PROPERTIES(m) name
-  EDIT Manufacturer OBJECT m 
-;
-
 FORM customersForm 'Покупатели'
   OBJECTS c = Customer
   PROPERTIES(c) READONLY id, name
@@ -193,24 +193,12 @@ FORM customersForm 'Покупатели'
   LIST Customer OBJECT c
 ;
 
-FORM customerForm 'Покупатель'
-  OBJECTS c = Customer
-  PROPERTIES(c) id, name
-  EDIT Customer OBJECT c 
-;
-
 FORM groupsForm 'Группы товаров'
   OBJECTS g = Group
   PROPERTIES(g) READONLY name
   //!!PROPERTIES(g) NEWEDIT, EDIT, DELETE
   ORDER name(g)
   LIST Group OBJECT g
-;
-
-FORM groupForm 'Группа товаров'
-  OBJECTS g = Group
-  PROPERTIES(g) name
-  EDIT Group OBJECT g 
 ;
 
 NAVIGATOR {

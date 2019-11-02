@@ -15,30 +15,34 @@ importCatalog(FILE file) {
   LOCAL onSale = STRING[1] (INTEGER);
   LOCAL price = NUMERIC[10,2] (INTEGER);
   IMPORT FROM file TO groupName, skuID, skuName, countryID, manufacturerName, packing, onSale, price;
+  // Обновляем справочники
+  FOR [GROUP MAX INTEGER i BY groupName(i)](ISTRING[100] name) 
+    AND name != 'Group' AND NOT groupByName(name) 
+    NEW g = Group DO {
+      name(g) <- name;
+    }
+  FOR [GROUP MAX INTEGER i BY countryID(i)](STRING[2] id) 
+    AND id != 'Country' AND NOT countryByID(id) 
+    NEW c = Country DO {
+      id(c) <- id;
+    }
+  FOR [GROUP MAX INTEGER i BY manufacturerName(i)](ISTRING[100] name) 
+    AND name != 'Manufacturer' AND NOT manufacturerByName(name) 
+    NEW m = Manufacturer DO {
+      name(m) <- name;
+    }
   // Создаём новые товары
   FOR skuID(INTEGER i) AND (skuID(i) != 'SKU') // Ошибочно захватывает заголовки в Excel-файле
     AND NOT skuByID(skuID(i)) NEW u = SKU
   DO {
     id(u) <- skuID(i);
   }
-  // Обновляем справочники
+  // Обновляем каталог товаров
   FOR id(SKU u) == skuID(INTEGER i) DO {
     name(u) <- skuName(i);
     group(u) <- groupByName(groupName(i));
-    IF NOT group(u) THEN NEW g = Group {
-      name(g) <- groupName(i);
-      group(u) <- g;
-    }
     country(u) <- countryByID(countryID(i));
-    IF NOT country(u) THEN NEW c = Country {
-      id(c) <- countryID(i);
-      country(u) <- c;
-    }
     manufacturer(u) <- manufacturerByName(manufacturerName(i));
-    IF NOT manufacturer(u) THEN NEW m = Manufacturer {
-      name(m) <- manufacturerName(i);
-      manufacturer(u) <- m;
-    }
     packing(u) <- packing(i);
     onSale(u) <- BOOLEAN(onSale(i));
     price(u) <- price(i);
